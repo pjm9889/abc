@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>시스템 엔지니어 프로세스 모니터링 대시보드</title>
+    
+    <!-- 외부 분리형 CSS 스타일시트 -->
+    <link rel="stylesheet" href="./assets/css/variables.css">
+    <link rel="stylesheet" href="./assets/css/layout.css">
+    <link rel="stylesheet" href="./assets/css/components.css">
+
+    <!-- Chart.js 및 FontAwesome CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- 좌측 메뉴 리스트 -->
+    <aside class="sidebar">
+        <div>
+            <div class="sidebar-header">
+                <h2><i class="fa-solid fa-server"></i> OpsControl</h2>
+            </div>
+            <ul class="sidebar-menu">
+                <li class="active" onclick="App.switchTab('dashboard', this)"><i class="fa-solid fa-chart-pie"></i> 대시보드 요약</li>
+                <li onclick="App.switchTab('processes', this)"><i class="fa-solid fa-microchip"></i> 프로세스 Top 20</li>
+                <li onclick="App.switchTab('analytics', this)"><i class="fa-solid fa-chart-line"></i> 상세 성능 분석</li>
+                <li onclick="App.switchTab('system', this)"><i class="fa-solid fa-desktop"></i> 시스템 하드웨어 정보</li>
+            </ul>
+        </div>
+        <div class="sidebar-footer">
+            <p><i class="fa-solid fa-shield-halved"></i> SE Ops v2.6</p>
+            <p id="live-clock" style="margin-top: 5px; color: var(--accent-primary); font-family: monospace;"></p>
+        </div>
+    </aside>
+
+    <!-- 메인 컨텐츠 영역 -->
+    <main class="main-content">
+        <header class="top-nav">
+            <div class="nav-title">
+                <h1 id="page-title">실시간 프로세스 모니터링 대시보드</h1>
+                <p>시스템 자원 점유율 상위 프로세스 상태 분석 및 인프라 통합 모니터링</p>
+            </div>
+            <div class="sys-info-badges">
+                <div class="badge"><i class="fa-solid fa-computer"></i> <span id="header-computer">DESKTOP-96N9HJ3</span></div>
+                <div class="badge"><i class="fa-solid fa-memory"></i> <span id="header-ram">31.28 GB</span></div>
+                <div class="badge"><i class="fa-solid fa-clock"></i> Uptime: <span id="header-uptime">3.64h</span></div>
+            </div>
+        </header>
+
+        <div class="dashboard-container">
+            <!-- 필터링 툴바 -->
+            <div class="filter-toolbar">
+                <div class="filter-group">
+                    <label for="filter-time">수집 시점 (CapturedAt)</label>
+                    <select id="filter-time" onchange="App.applyFilters()">
+                        <option value="all">전체 시점 보기</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="filter-search">프로세스 검색</label>
+                    <input type="text" id="filter-search" placeholder="예: chrome, explorer..." oninput="App.applyFilters()">
+                </div>
+                <div class="filter-group">
+                    <label for="filter-sort">정렬 기준</label>
+                    <select id="filter-sort" onchange="App.applyFilters()">
+                        <option value="memory">메모리 사용량 (MB) 내림차순</option>
+                        <option value="cpu">CPU 누적 시간 내림차순</option>
+                        <option value="threads">스레드 수 내림차순</option>
+                        <option value="handles">핸들 수 내림차순</option>
+                    </select>
+                </div>
+                <div class="filter-actions">
+                    <button class="btn btn-secondary" onclick="App.resetFilters()"><i class="fa-solid fa-rotate-right"></i> 초기화</button>
+                    <button class="btn btn-primary" onclick="App.exportCSV()"><i class="fa-solid fa-download"></i> CSV 내보내기</button>
+                </div>
+            </div>
+
+            <!-- TAB 1: 대시보드 요약 -->
+            <div id="tab-dashboard" class="tab-content active">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <span class="kpi-title">총 모니터링 레코드</span>
+                        <span class="kpi-value" id="kpi-total-records">0</span>
+                        <span class="kpi-subtext">수집된 프로세스 샘플</span>
+                    </div>
+                    <div class="kpi-card warning">
+                        <span class="kpi-title">총 메모리 점유 (Top 20 평균)</span>
+                        <span class="kpi-value" id="kpi-avg-memory">0 MB</span>
+                        <span class="kpi-subtext">시스템 전체 RAM 대비 비율 산출</span>
+                    </div>
+                    <div class="kpi-card danger">
+                        <span class="kpi-title">최대 메모리 점유 프로세스</span>
+                        <span class="kpi-value" id="kpi-max-proc" style="font-size: 1.3rem;">-</span>
+                        <span class="kpi-subtext" id="kpi-max-proc-val">0 MB</span>
+                    </div>
+                    <div class="kpi-card success">
+                        <span class="kpi-title">활성 프로세스 종류</span>
+                        <span class="kpi-value" id="kpi-unique-procs">0</span>
+                        <span class="kpi-subtext">고유 프로세스 명칭 개수</span>
+                    </div>
+                </div>
+
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fa-solid fa-chart-bar"></i> 프로세스별 메모리 점유 상위 (Top 10)</h3>
+                        </div>
+                        <div class="chart-body"><canvas id="memoryChart"></canvas></div>
+                    </div>
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fa-solid fa-chart-pie"></i> CPU 누적 시간 분포</h3>
+                        </div>
+                        <div class="chart-body"><canvas id="cpuPieChart"></canvas></div>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-table"></i> 프로세스 상세 목록</h3>
+                        <span id="table-count" style="font-size: 0.85rem; color: var(--text-muted);">총 0개 항목</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>순위</th><th>프로세스명</th><th>PID</th><th>메모리 (MB)</th>
+                                    <th>CPU 누적 (초)</th><th>스레드</th><th>핸들</th><th>시작 시간</th><th>상태</th>
+                                </tr>
+                            </thead>
+                            <tbody id="process-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: 프로세스 Top 20 -->
+            <div id="tab-processes" class="tab-content">
+                <div class="table-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-list-check"></i> 전체 Top 20 프로세스 리스트</h3>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>수집시점</th><th>컴퓨터명</th><th>순위</th><th>프로세스명</th>
+                                    <th>PID</th><th>메모리 (MB)</th><th>CPU (초)</th><th>Threads</th><th>Handles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="full-process-table-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: 상세 성능 분석 -->
+            <div id="tab-analytics" class="tab-content">
+                <div class="charts-grid" style="grid-template-columns: 1fr;">
+                    <div class="chart-card">
+                        <div class="chart-header">
+                            <h3><i class="fa-solid fa-wave-square"></i> 스레드 수 대비 메모리 점유 산점도 분석</h3>
+                        </div>
+                        <div class="chart-body" style="height: 400px;"><canvas id="scatterChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: 시스템 하드웨어 정보 -->
+            <div id="tab-system" class="tab-content">
+                <div class="table-card">
+                    <div class="chart-header">
+                        <h3><i class="fa-solid fa-server"></i> 대상 시스템 하드웨어 및 OS 스펙</h3>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; padding: 10px 0;">
+                        <div style="background: var(--bg-main); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="color: var(--accent-primary); margin-bottom: 10px;"><i class="fa-solid fa-laptop"></i> 제조사 / 모델</h4>
+                            <p style="font-size: 1.1rem; font-weight: 600;">HP OmniBook X</p>
+                            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 5px;">14-fk0xxx</p>
+                        </div>
+                        <div style="background: var(--bg-main); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="color: var(--accent-primary); margin-bottom: 10px;"><i class="fa-solid fa-microchip"></i> 프로세스 (CPU)</h4>
+                            <p style="font-size: 1.0rem; font-weight: 600;">AMD Ryzen AI 7 350 w/ Radeon 860M</p>
+                        </div>
+                        <div style="background: var(--bg-main); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="color: var(--accent-primary); margin-bottom: 10px;"><i class="fa-solid fa-window-maximize"></i> 운영체제 (OS)</h4>
+                            <p style="font-size: 1.1rem; font-weight: 600;">Microsoft Windows 11 Home</p>
+                        </div>
+                        <div style="background: var(--bg-main); padding: 20px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <h4 style="color: var(--accent-primary); margin-bottom: 10px;"><i class="fa-solid fa-clock"></i> 시스템 가동 시간</h4>
+                            <p style="font-size: 1.1rem; font-weight: 600;">3.64 시간</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- JS 모듈 로드 -->
+    <script src="./assets/js/mock-data.js"></script>
+    <script src="./assets/js/charts.js"></script>
+    <script src="./assets/js/app.js"></script>
+</body>
+</html>
